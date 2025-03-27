@@ -42,7 +42,10 @@ class PaymentExternalSystemAdapterImpl(
 
     private val semaphore = Semaphore(parallelRequests, true)
 
-    private val client = OkHttpClient.Builder().build()
+    private val client = OkHttpClient
+        .Builder()
+        .readTimeout(Duration.ofMillis(requestAverageProcessingTime.toMillis() * 2))
+        .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
 
@@ -101,6 +104,8 @@ class PaymentExternalSystemAdapterImpl(
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                     }
+
+                    performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
                 }
 
                 else -> {
