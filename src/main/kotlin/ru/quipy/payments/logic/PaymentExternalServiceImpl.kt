@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.CountingRateLimiter
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -34,9 +35,9 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val rateLimiter = CountingRateLimiter(
-        rate = rateLimitPerSec,
-        window = 1,
+    private val rateLimiter = SlidingWindowRateLimiter(
+        rate = rateLimitPerSec.toLong(),
+        window = Duration.ofSeconds(1),
     )
 
     private val semaphore = Semaphore(parallelRequests, true)
@@ -44,6 +45,9 @@ class PaymentExternalSystemAdapterImpl(
     private val client = OkHttpClient.Builder().build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+
+        if (now() + requestAverageProcessingTime.toMillis() > deadline) return
+
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -61,12 +65,14 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         while (!rateLimiter.tick()) {
-            Thread.sleep(1000)
+            Thread.sleep(200)
         }
         semaphore.acquire()
 
         try {
             client.newCall(request).execute().use { response ->
+                semaphore.release()
+
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
@@ -81,8 +87,14 @@ class PaymentExternalSystemAdapterImpl(
                 paymentESService.update(paymentId) {
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
+
+                if (body?.result == false) {
+                    performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+                }
             }
         } catch (e: Exception) {
+            semaphore.release()
+
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
@@ -99,8 +111,6 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
-        } finally {
-            semaphore.release()
         }
     }
 
