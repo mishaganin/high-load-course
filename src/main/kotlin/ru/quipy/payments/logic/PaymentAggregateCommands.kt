@@ -3,6 +3,7 @@ package ru.quipy.payments.logic
 import ru.quipy.payments.api.PaymentCreatedEvent
 import ru.quipy.payments.api.PaymentProcessedEvent
 import ru.quipy.payments.api.PaymentSubmittedEvent
+import java.io.File
 import java.time.Duration
 import java.util.*
 
@@ -20,6 +21,10 @@ fun PaymentAggregateState.logSubmission(success: Boolean, transactionId: UUID, s
         this.getId(), success, this.orderId, transactionId, startedAt, spentInQueueDuration
     )
 }
+
+val processingTimesMillis = mutableListOf<Long>()
+
+val fileWithValues = File("src/main/resources/values.txt")
 
 fun PaymentAggregateState.logProcessing(
     success: Boolean,
