@@ -1,5 +1,8 @@
 package ru.quipy.payments.logic
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -23,18 +26,20 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val paymentExecutor = ThreadPoolExecutor(
+/*    private val paymentExecutor = ThreadPoolExecutor(
         56,
         56,
         10000L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(),
         NamedThreadFactory("payment-submission-executor")
-    )
+    )*/
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+    private val coroutineScope = CoroutineScope(Dispatchers.IO)
+
+    suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-        paymentExecutor.submit {
+        coroutineScope.launch {
             val createdEvent = paymentESService.create {
                 it.create(
                     paymentId,

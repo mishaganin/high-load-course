@@ -41,6 +41,13 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
+    private val rateLimiter = SlidingWindowRateLimiter(
+        rate = rateLimitPerSec.toLong(),
+        window = Duration.ofSeconds(1),
+    )
+
+    private val semaphore = Semaphore(parallelRequests, true)
+
     private val http2Client = HttpClient.newBuilder()
         .executor(Executors.newFixedThreadPool(100))
         .version(HttpClient.Version.HTTP_2)
@@ -66,7 +73,13 @@ class PaymentExternalSystemAdapterImpl(
             .POST(BodyPublishers.noBody())
             .build()
 
+        while (!rateLimiter.tick()) {
+            Thread.sleep(200)
+        }
+        semaphore.acquire()
+
         http2Client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply { response ->
+            semaphore.release()
 
             val body = try {
                 mapper.readValue(response.body(), ExternalSysResponse::class.java)
@@ -88,6 +101,7 @@ class PaymentExternalSystemAdapterImpl(
             }
 
         }.exceptionally { ex ->
+            semaphore.release()
 
             when (ex) {
                 is SocketTimeoutException -> {
